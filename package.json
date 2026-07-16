@@ -1,0 +1,54 @@
+{
+  "name": "upkuajing-cli",
+  "version": "1.0.0",
+  "description": "B2B lead generation & cross-border trade CLI — search customs trade data, global companies, LinkedIn profiles; run email/SMS outreach campaigns and validate contact info. For developers and AI agents.",
+  "keywords": [
+    "外贸获客",
+    "外贸触达",
+    "跨境营销",
+    "b2b-leads",
+    "lead-generation",
+    "customs-data",
+    "trade-data",
+    "company-search",
+    "linkedin",
+    "email-marketing",
+    "sms-marketing",
+    "email-validation",
+    "phone-validation",
+    "upkuajing"
+  ],
+  "bin": {
+    "up-cli": "dist/index.js"
+  },
+  "files": [
+    "dist/index.js",
+    "dist/client.js",
+    "dist/config.js",
+    "dist/output.js",
+    "dist/helpers.js",
+    "dist/init.js",
+    "dist/commands",
+    "skills"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test dist/tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^12.0.0"
+  },
+  "license": "MIT",
+  "homepage": "https://www.upkuajing.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Upkuajing/upkuajing-cli"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
+  }
+}
