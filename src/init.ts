@@ -22,6 +22,9 @@ import { hasApiKey, writeApiKey, getEnvFilePath } from './config';
  *
  * skill 内容来自 npm 包内的 skills/upkuajing-cli/（打包进 npm，不从远程下载）。
  * skills 工具负责检测系统已安装的 Agent 并释放到对应目录。
+ *
+ * npx -y 自动确认安装 skills 包本身，不提示用户；
+ * skills add 不加 -y，保留用户交互式选择释放到哪些 Agent。
  */
 function releaseSkill(): boolean {
   // 引导 skill 源文件在包内的路径
@@ -34,20 +37,18 @@ function releaseSkill(): boolean {
   }
 
   try {
-    // npx skills add <本地路径> -g
-    // 不加 -y，让用户交互式选择释放到哪些 Agent
-    // -g: 全局安装（到用户级 Agent skill 目录）
-    // Windows 上需要 shell: true 才能找到 npx.cmd，Mac/Linux 不需要
+    // npx -y: 自动安装 skills 包，不提示 "Ok to proceed?"
+    // skills add <path> -g: 释放到全局 Agent skill 目录，交互式选择 Agent
     // 不设超时，交互式流程需要用户操作时间
-    execFileSync('npx', ['skills', 'add', sourceSkillDir, '-g'], {
+    execFileSync('npx', ['-y', 'skills', 'add', sourceSkillDir, '-g'], {
       stdio: 'inherit',
       shell: process.platform === 'win32',
     });
     return true;
   } catch (e: any) {
-    // 超时或用户取消不一定是失败，skill 可能已安装成功
+    // 用户取消不一定是失败，skill 可能已安装成功
     console.error('  skill 释放流程结束（如未成功，可手动重试）');
-    console.error('  手动运行：npx skills add ' + sourceSkillDir + ' -y -g');
+    console.error('  手动运行：npx skills add ' + sourceSkillDir + ' -g');
     return false;
   }
 }
