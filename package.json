@@ -39,7 +39,8 @@
     "node": ">=18"
   },
   "dependencies": {
-    "commander": "^12.0.0"
+    "commander": "^12.0.0",
+    "skills": "^1.5.18"
   },
   "license": "MIT",
   "homepage": "https://www.upkuajing.com",

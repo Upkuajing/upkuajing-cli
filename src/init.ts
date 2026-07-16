@@ -37,11 +37,11 @@ function releaseSkill(): boolean {
     // npx skills add <本地路径> -g
     // 不加 -y，让用户交互式选择释放到哪些 Agent
     // -g: 全局安装（到用户级 Agent skill 目录）
-    // shell: true 是 Windows 上调用 npx 的必要条件
+    // Windows 上需要 shell: true 才能找到 npx.cmd，Mac/Linux 不需要
     // 不设超时，交互式流程需要用户操作时间
     execFileSync('npx', ['skills', 'add', sourceSkillDir, '-g'], {
       stdio: 'inherit',
-      shell: true,
+      shell: process.platform === 'win32',
     });
     return true;
   } catch (e: any) {
