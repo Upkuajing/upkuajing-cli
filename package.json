@@ -35,6 +35,10 @@
     "build": "tsc",
     "test": "tsc && node --test dist/tests/*.test.js"
   },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
   "engines": {
     "node": ">=18"
   },
@@ -45,7 +49,7 @@
   "homepage": "https://www.upkuajing.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Upkuajing/upkuajing-cli"
+    "url": "git+https://github.com/Upkuajing/upkuajing-cli.git"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
