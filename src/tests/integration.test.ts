@@ -1,154 +1,138 @@
 /**
- * 集成测试 — 真实 API 调用
+ * 集成测试 - 真实调用测试服（CLI 端到端）
  *
- * 分两类：
- * - 免认证测试：map countries/provinces/cities，无需 API key，不扣费，默认运行
- * - 付费测试：search/depth-company 等需要余额的接口，需设置 UPKUAJING_INTEGRATION=1 才运行
+ * 通过运行 CLI（dist/index.js）访问测试服，验证端到端正确性。
+ * 测试服不扣费，所有接口默认运行（无 UPKUAJING_INTEGRATION 开关）。
  *
- * 付费测试在调用前/后都会运行 auth info 打印余额，方便追踪扣费。
- *
- * 用法：
- *   npm test                                    # 只跑单元测试 + 免认证集成测试
- *   UPKUAJING_INTEGRATION=1 npm test            # 加上付费集成测试（会消耗余额）
+ * 测试服配置通过环境变量注入（见 helpers.ts），代码中不含任何测试地址或 key。
+ * 全部命令组真实调用测试服。
  */
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { execFileSync } from 'node:child_process';
-import * as path from 'node:path';
+import { runCli, runCliAllowFail, skipIfNoConfig, assertList } from './helpers';
 
-const CLI = path.join(__dirname, '..', 'index.js');
+describe('集成测试：真实调用测试服', { skip: skipIfNoConfig() }, () => {
 
-/** 运行 CLI 命令，返回 stdout */
-function runCli(args: string[]): string {
-  return execFileSync('node', [CLI, ...args], {
-    encoding: 'utf-8',
-    timeout: 30_000,
-    env: { ...process.env },
-  });
-}
-
-/** 运行 CLI 命令，返回 stdout/stderr/exitCode（允许非零退出码） */
-function runCliAllowFail(args: string[]): { stdout: string; stderr: string; code: number } {
-  try {
-    const stdout = execFileSync('node', [CLI, ...args], {
-      encoding: 'utf-8',
-      timeout: 30_000,
-      env: { ...process.env },
-      stdio: ['pipe', 'pipe', 'pipe'],
+  describe('map 命令组（免认证）', () => {
+    it('map countries - 国家列表，第一项为阿富汗', () => {
+      const data = JSON.parse(runCli(['map', 'countries']));
+      const list = assertList(data);
+      const first = list[0];
+      assert.strictEqual(first.id, 1);
+      assert.strictEqual(first.code, 'AF');
+      assert.strictEqual(first.nameEn, 'Afghanistan');
+      assert.strictEqual(first.name, '阿富汗');
     });
-    return { stdout, stderr: '', code: 0 };
-  } catch (e: any) {
-    return {
-      stdout: e.stdout?.toString() || '',
-      stderr: e.stderr?.toString() || '',
-      code: e.status || 1,
-    };
-  }
-}
 
-/** 从 auth info 输出提取余额（分钱），打印并返回 */
-function printBalance(label: string): number {
-  const result = runCliAllowFail(['auth', 'info']);
-  if (result.code !== 0) {
-    console.log(`[${label}] 无法获取余额（auth info 失败）`);
-    return -1;
-  }
-  try {
-    const data = JSON.parse(result.stdout);
-    const balanceStr = data['跨境魔方开放平台账号余额'] || '';
-    const match = balanceStr.match(/(\d+)/);
-    const balance = match ? parseInt(match[1], 10) : -1;
-    console.log(`[${label}] 账号余额：${balanceStr}`);
-    return balance;
-  } catch {
-    console.log(`[${label}] auth info 返回解析失败`);
-    return -1;
-  }
-}
+    it('map provinces --country-id 1 - 省份列表非空', () => {
+      const data = JSON.parse(runCli(['map', 'provinces', '--country-id', '1']));
+      const list = assertList(data);
+      assert.ok(list.length > 0, '省份列表不应为空');
+    });
 
-// 付费测试是否运行
-const RUN_PAID = process.env.UPKUAJING_INTEGRATION === '1';
-
-describe('集成测试：免认证接口', () => {
-  it('map countries — 返回国家列表', () => {
-    const output = runCli(['map', 'countries']);
-    const data = JSON.parse(output);
-    assert.ok(data.data, '应有 data 字段');
-    assert.ok(Array.isArray(data.data.list), 'list 应为数组');
-    assert.ok(data.data.list.length > 0, '列表不应为空');
-    const first = data.data.list[0];
-    assert.ok(first.id, '应有 id');
-    assert.ok(first.name, '应有 name');
-    assert.ok(first.nameEn, '应有 nameEn');
+    it('map cities --country-id 1 - 城市列表', () => {
+      const data = JSON.parse(runCli(['map', 'cities', '--country-id', '1']));
+      const list = assertList(data);
+      assert.ok(Array.isArray(list), '城市列表应为数组');
+    });
   });
 
-  it('map provinces — 需要国家ID参数', () => {
-    const output = runCli(['map', 'provinces', '--country-id', '1']);
-    const data = JSON.parse(output);
-    assert.ok(data.data, '应有 data 字段');
-    assert.ok(Array.isArray(data.data.list), 'list 应为数组');
+  describe('auth 命令组', () => {
+    it('auth info - 返回账户信息', () => {
+      const data = JSON.parse(runCli(['auth', 'info']));
+      assert.ok('跨境魔方开放平台账号' in data, '应有开放平台账号字段');
+      assert.ok('跨境魔方开放平台账号余额' in data, '应有余额字段');
+    });
   });
 
-  it('map cities — 需要国家ID参数', () => {
-    const output = runCli(['map', 'cities', '--country-id', '1']);
-    const data = JSON.parse(output);
-    assert.ok(data.data, '应有 data 字段');
-    assert.ok(Array.isArray(data.data.list), 'list 应为数组');
-  });
-});
-
-describe('集成测试：付费接口', { skip: !RUN_PAID }, () => {
-  it('auth info — 返回账户信息（不扣费）', () => {
-    const output = runCli(['auth', 'info']);
-    const data = JSON.parse(output);
-    assert.ok('跨境魔方开放平台账号' in data, '应有账号字段');
-    assert.ok('跨境魔方开放平台账号余额' in data, '应有余额字段');
+  describe('search 命令组', () => {
+    it('search company - 搜索公司返回列表', () => {
+      const data = JSON.parse(runCli([
+        'search', 'company', '--params', '{"keywords":["test"]}',
+      ]));
+      const list = assertList(data);
+      assert.ok(list.length > 0, '搜索结果不应为空');
+      const first = list[0];
+      assert.ok(first.pid, '应有 pid');
+      assert.ok(first.company_name, '应有 company_name');
+      assert.ok(first.country_code, '应有 country_code');
+    });
   });
 
-  it('search company — 搜索公司（付费）', () => {
-    const balanceBefore = printBalance('search company 调用前');
+  describe('depth-company 命令组', () => {
+    it('depth-company company-search - 搜索公司返回列表', () => {
+      const data = JSON.parse(runCli([
+        'depth-company', 'company-search', '--params', '{"keywords":["test"]}',
+      ]));
+      const list = assertList(data);
+      assert.ok(list.length > 0, '搜索结果不应为空');
+      const first = list[0];
+      assert.ok(first.pid, '应有 pid');
+      assert.ok(first.company_name, '应有 company_name');
+      assert.ok(first.country_code, '应有 country_code');
+    });
 
-    const result = runCliAllowFail([
-      'search', 'company', '--params', '{"keywords":["test"]}',
-    ]);
-    const data = JSON.parse(result.stdout);
+    it('depth-company employee - 查员工列表', () => {
+      // 先 company-search 动态拿 pid（避免硬编码 pid 随数据变动而失效）
+      const searchData = JSON.parse(runCli([
+        'depth-company', 'company-search', '--params', '{"keywords":["test"]}',
+      ]));
+      const pid = assertList(searchData)[0]?.pid;
+      assert.ok(pid, '应从 company-search 拿到 pid');
 
-    const balanceAfter = printBalance('search company 调用后');
-
-    if (result.code !== 0) {
-      assert.ok(data.code !== undefined, 'API 错误应返回 code');
-      console.log(`  search company 返回 code=${data.code}, msg=${data.msg}`);
-      return;
-    }
-
-    assert.ok(data.data, '成功时应有 data');
-    console.log(`  search company 成功，返回数据`);
-
-    if (balanceBefore >= 0 && balanceAfter >= 0) {
-      console.log(`  本次消耗：${balanceBefore - balanceAfter}分钱(RMB)`);
-    }
+      const empData = JSON.parse(runCli(['depth-company', 'employee', '--pid', pid]));
+      const empList = assertList(empData);
+      // 员工列表可能为空，但应为数组；非空时断言字段
+      if (empList.length > 0) {
+        assert.ok(empList[0].hid, '员工项应有 hid');
+      }
+    });
   });
 
-  it('depth-company employee — 查员工（付费）', () => {
-    const balanceBefore = printBalance('depth-company employee 调用前');
+  describe('linkedin 命令组', () => {
+    it('linkedin person-search - 搜索人员返回列表', () => {
+      const data = JSON.parse(runCli([
+        'linkedin', 'person-search', '--params', '{"keywords":["test"]}',
+      ]));
+      const list = assertList(data);
+      assert.ok(list.length > 0, '搜索结果不应为空');
+      const first = list[0];
+      assert.ok(first.hid, '应有 hid');
+      assert.ok(first.human_name, '应有 human_name');
+      assert.ok(first.country_code, '应有 country_code');
+    });
+  });
 
-    const result = runCliAllowFail([
-      'depth-company', 'employee', '--pid', 'TEST_001',
-    ]);
-    const data = JSON.parse(result.stdout);
+  describe('customs-trade 命令组', () => {
+    it('customs-trade search - 海关公司搜索（companyType=1）', () => {
+      const result = runCliAllowFail([
+        'customs-trade', 'search', '--params', '{"companyType":1,"products":["电子"]}',
+      ]);
+      assert.strictEqual(result.code, 0, `应成功，stderr: ${result.stderr}`);
+      const data = JSON.parse(result.stdout);
+      assert.ok(data.data !== undefined, '应有 data');
+    });
+  });
 
-    const balanceAfter = printBalance('depth-company employee 调用后');
+  describe('validation 命令组', () => {
+    it('validation email - 邮箱校验', () => {
+      const result = runCliAllowFail([
+        'validation', 'email', '--emails', 'test@test.com',
+      ]);
+      assert.strictEqual(result.code, 0, `应成功，stderr: ${result.stderr}`);
+      const data = JSON.parse(result.stdout);
+      assert.ok(data.data !== undefined, '应有 data');
+    });
+  });
 
-    assert.ok(data.code !== undefined || data.data !== undefined, '应返回结构化响应');
-    if (data.code) {
-      console.log(`  depth-company employee 返回 code=${data.code}, msg=${data.msg}`);
-    } else {
-      console.log(`  depth-company employee 成功，返回数据`);
-    }
-
-    if (balanceBefore >= 0 && balanceAfter >= 0) {
-      console.log(`  本次消耗：${balanceBefore - balanceAfter}分钱(RMB)`);
-    }
+  describe('email 命令组', () => {
+    it('email task-list - 邮件任务列表', () => {
+      const result = runCliAllowFail(['email', 'task-list']);
+      assert.strictEqual(result.code, 0, `应成功，stderr: ${result.stderr}`);
+      const data = JSON.parse(result.stdout);
+      // email task-list 输出完整 response（含 code）
+      assert.strictEqual(data.code, 0, `code 应为 0，msg: ${data.msg}`);
+    });
   });
 });

@@ -1,74 +1,90 @@
 /**
- * 测试辅助工具：mock fetch + 捕获调用参数
+ * 测试辅助工具 - 真实请求测试
+ *
+ * 测试服配置从环境变量注入（代码中不含任何测试地址或 API key）：
+ * - UPKUAJING_API_BASE_URL：测试服地址
+ * - UPKUAJING_API_KEY：测试服 API key
+ *
+ * 未配置时测试整体 skip，避免本地无配置时误报失败。
+ * 运行：UPKUAJING_API_BASE_URL=... UPKUAJING_API_KEY=... npm test
  */
 
 import * as assert from 'node:assert';
+import { execFileSync } from 'node:child_process';
+import * as path from 'node:path';
 
-/** 捕获的 fetch 调用信息 */
-export interface FetchCall {
-  url: string;
-  method: string;
-  headers: Record<string, string>;
-  body: string;
+/** 测试服配置 */
+export interface TestConfig {
+  baseUrl: string;
+  apiKey: string;
 }
 
-/** 创建 mock fetch，记录调用并返回指定响应 */
-export function createMockFetch(responseData: any, status: number = 200) {
-  const calls: FetchCall[] = [];
+/**
+ * 读取测试服配置，缺失返回 null。
+ * 仅从环境变量读取，代码中不含任何测试地址或 key。
+ */
+export function getTestConfig(): TestConfig | null {
+  const baseUrl = process.env.UPKUAJING_API_BASE_URL;
+  const apiKey = process.env.UPKUAJING_API_KEY;
+  if (!baseUrl || !apiKey) {
+    return null;
+  }
+  return { baseUrl, apiKey };
+}
 
-  const mockFetch = async (url: string, init: any) => {
-    const call: FetchCall = {
-      url,
-      method: init?.method || 'GET',
-      headers: init?.headers || {},
-      body: init?.body || '',
-    };
-    calls.push(call);
+/**
+ * 未配置测试服时返回 skip 原因字符串；已配置返回 false（不 skip）。
+ * 用于 describe/it 的 { skip } 选项。
+ */
+export function skipIfNoConfig(): string | false {
+  return getTestConfig()
+    ? false
+    : '未配置测试服环境变量 UPKUAJING_API_BASE_URL / UPKUAJING_API_KEY';
+}
 
+// CLI 入口（编译产物 dist/index.js）
+const CLI = path.join(__dirname, '..', 'index.js');
+
+/** 运行 CLI 命令，返回 stdout（非零退出码会抛错） */
+export function runCli(args: string[]): string {
+  return execFileSync('node', [CLI, ...args], {
+    encoding: 'utf-8',
+    timeout: 30_000,
+    env: { ...process.env },
+  });
+}
+
+/** 运行 CLI 命令，返回 stdout/stderr/exitCode（允许非零退出码） */
+export function runCliAllowFail(args: string[]): { stdout: string; stderr: string; code: number } {
+  try {
+    const stdout = execFileSync('node', [CLI, ...args], {
+      encoding: 'utf-8',
+      timeout: 30_000,
+      env: { ...process.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return { stdout, stderr: '', code: 0 };
+  } catch (e: any) {
     return {
-      ok: status >= 200 && status < 300,
-      status,
-      json: async () => responseData,
-      text: async () => JSON.stringify(responseData),
+      stdout: e.stdout?.toString() || '',
+      stderr: e.stderr?.toString() || '',
+      code: e.status || 1,
     };
-  };
-
-  return { mockFetch, calls };
+  }
 }
 
-/** 断言 fetch 被调用了一次，返回调用详情 */
-export function assertSingleCall(calls: FetchCall[]): FetchCall {
-  assert.strictEqual(calls.length, 1, `Expected 1 fetch call, got ${calls.length}`);
-  return calls[0];
-}
-
-/** 断言请求体是预期的 JSON */
-export function assertBody(call: FetchCall, expected: Record<string, any>) {
-  const actual = JSON.parse(call.body);
-  assert.deepStrictEqual(actual, expected, `Request body mismatch`);
-}
-
-/** 断言 URL 包含指定 endpoint */
-export function assertEndpoint(call: FetchCall, endpoint: string) {
-  assert.ok(
-    call.url.endsWith(endpoint),
-    `Expected URL to end with "${endpoint}", got "${call.url}"`,
-  );
-}
-
-/** 断言 headers 包含 Bearer token */
-export function assertAuthHeader(call: FetchCall, token: string) {
+/** 断言 API 成功响应（code=0） */
+export function assertSuccess(data: any): void {
   assert.strictEqual(
-    call.headers['Authorization'],
-    `Bearer ${token}`,
-    'Authorization header mismatch',
+    data.code,
+    0,
+    `Expected code=0, got code=${data.code}, msg=${data.msg ?? ''}`,
   );
 }
 
-/** 断言 headers 不含 Authorization */
-export function assertNoAuthHeader(call: FetchCall) {
-  assert.ok(
-    !call.headers['Authorization'],
-    'Expected no Authorization header, but found one',
-  );
+/** 断言响应含 data.list 数组并返回该数组 */
+export function assertList(data: any): any[] {
+  assert.ok(data.data, '响应应有 data 字段');
+  assert.ok(Array.isArray(data.data.list), 'data.list 应为数组');
+  return data.data.list;
 }

@@ -7,7 +7,7 @@
 import { getApiKey } from './config';
 
 // API 配置
-const API_BASE_URL = 'https://openapi.upkuajing.com';
+const API_BASE_URL = process.env.UPKUAJING_API_BASE_URL || 'https://openapi.upkuajing.com';
 const API_TIMEOUT = 120_000; // 总超时 120s（列表查询可能较慢）
 
 // API 响应信封

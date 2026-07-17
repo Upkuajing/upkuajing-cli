@@ -1,218 +1,76 @@
 /**
- * 搜索类命令单元测试
+ * 命令参数校验测试 - 纯客户端校验逻辑
  *
- * 测试搜索命令的参数构建逻辑：
- * - sort/isExact 默认值注入
- * - companyType 校验
- * - 批量参数 20 上限校验
- * - cursor/pitId 透传
+ * 验证 CLI 在发送请求前的参数校验：
+ * - companyType 缺失/非法 -> 报错退出
+ * - 批量 ID 超过 20 上限 -> 报错退出
+ * - --params JSON 无效 -> 报错退出
+ *
+ * 通过 runCliAllowFail 运行 CLI，断言退出码（非零）和 stderr 内容。
+ * 校验在发请求前发生，不实际调用 API，因此无需测试服配置。
  */
 
-import { describe, it, before, after } from 'node:test';
+import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import {
-  createMockFetch,
-  assertSingleCall,
-  assertBody,
-  assertEndpoint,
-} from './helpers';
+import { runCliAllowFail } from './helpers';
 
-const originalFetch = globalThis.fetch;
-const originalEnv = process.env.UPKUAJING_API_KEY;
-
-describe('搜索命令参数构建', () => {
-  before(() => {
-    process.env.UPKUAJING_API_KEY = 'test-key';
+describe('命令参数校验（纯客户端，不发请求）', () => {
+  it('customs-trade search：缺 companyType 报错退出', () => {
+    const result = runCliAllowFail([
+      'customs-trade', 'search', '--params', '{"products":["电子"]}',
+    ]);
+    assert.strictEqual(result.code, 1, '应非零退出');
+    assert.ok(
+      result.stderr.includes('companyType'),
+      `stderr 应提示 companyType，实际：${result.stderr}`,
+    );
   });
 
-  after(() => {
-    globalThis.fetch = originalFetch;
-    if (originalEnv === undefined) {
-      delete process.env.UPKUAJING_API_KEY;
-    } else {
-      process.env.UPKUAJING_API_KEY = originalEnv;
-    }
+  it('customs-trade search：companyType 非 1/2 报错退出', () => {
+    const result = runCliAllowFail([
+      'customs-trade', 'search', '--params', '{"companyType":3}',
+    ]);
+    assert.strictEqual(result.code, 1, '应非零退出');
+    assert.ok(result.stderr.includes('companyType'));
   });
 
-  it('search company：自动注入 sort=0, isExact=false', async () => {
-    const { mockFetch, calls } = createMockFetch({ code: 0, data: { list: [] }, fee: {} });
-    globalThis.fetch = mockFetch as any;
-
-    const { makeRequest } = await import('../client');
-    // 模拟 search company 的 action 逻辑
-    const params: Record<string, any> = JSON.parse('{"keywords":["test"]}');
-    if (params.sort === undefined) params.sort = 0;
-    if (params.isExact === undefined) params.isExact = false;
-    await makeRequest('/agent/search/company/list', params);
-
-    const call = assertSingleCall(calls);
-    assertBody(call, { keywords: ['test'], sort: 0, isExact: false });
+  it('search company-batch：超过 20 个 pid 报错退出', () => {
+    const pids = Array.from({ length: 21 }, (_, i) => `pid_${i}`);
+    const result = runCliAllowFail(['search', 'company-batch', '--pids', ...pids]);
+    assert.strictEqual(result.code, 1, '应非零退出');
+    assert.ok(
+      result.stderr.includes('20'),
+      `stderr 应提示上限 20，实际：${result.stderr}`,
+    );
   });
 
-  it('search company：用户已传 sort 时不覆盖', async () => {
-    const { mockFetch, calls } = createMockFetch({ code: 0, data: { list: [] }, fee: {} });
-    globalThis.fetch = mockFetch as any;
-
-    const { makeRequest } = await import('../client');
-    const params: Record<string, any> = JSON.parse('{"keywords":["test"],"sort":1,"isExact":true}');
-    if (params.sort === undefined) params.sort = 0;
-    if (params.isExact === undefined) params.isExact = false;
-    await makeRequest('/agent/search/company/list', params);
-
-    const call = assertSingleCall(calls);
-    assertBody(call, { keywords: ['test'], sort: 1, isExact: true });
+  it('customs-trade detail：超过 20 个 company-id 报错退出', () => {
+    const ids = Array.from({ length: 21 }, (_, i) => String(i + 1));
+    const result = runCliAllowFail([
+      'customs-trade', 'detail', '--company-ids', ...ids,
+    ]);
+    assert.strictEqual(result.code, 1, '应非零退出');
+    assert.ok(result.stderr.includes('20'));
   });
 
-  it('search person：同样注入默认值', async () => {
-    const { mockFetch, calls } = createMockFetch({ code: 0, data: { list: [] }, fee: {} });
-    globalThis.fetch = mockFetch as any;
-
-    const { makeRequest } = await import('../client');
-    const params: Record<string, any> = JSON.parse('{"humanNames":["张三"]}');
-    if (params.sort === undefined) params.sort = 0;
-    if (params.isExact === undefined) params.isExact = false;
-    await makeRequest('/agent/search/person/list', params);
-
-    const call = assertSingleCall(calls);
-    assertBody(call, { humanNames: ['张三'], sort: 0, isExact: false });
+  it('search company：--params 非 JSON 报错退出', () => {
+    const result = runCliAllowFail([
+      'search', 'company', '--params', 'not-a-json',
+    ]);
+    assert.strictEqual(result.code, 1, '应非零退出');
+    assert.ok(
+      result.stderr.includes('JSON'),
+      `stderr 应提示 JSON 无效，实际：${result.stderr}`,
+    );
   });
 
-  it('depth-company company-search：注入默认值 + pitId', async () => {
-    const { mockFetch, calls } = createMockFetch({ code: 0, data: { list: [] }, fee: {} });
-    globalThis.fetch = mockFetch as any;
-
-    const { makeRequest } = await import('../client');
-    const params: Record<string, any> = JSON.parse('{"keywords":["科技"]}');
-    if (params.sort === undefined) params.sort = 0;
-    if (params.isExact === undefined) params.isExact = false;
-    const pitId = 'pit-id-value';
-    if (pitId) params.pitId = pitId;
-    await makeRequest('/agent/search/depth_company/company/list', params);
-
-    const call = assertSingleCall(calls);
-    assertEndpoint(call, '/agent/search/depth_company/company/list');
-    assertBody(call, { keywords: ['科技'], sort: 0, isExact: false, pitId: 'pit-id-value' });
-  });
-
-  it('linkedin person-search：注入默认值', async () => {
-    const { mockFetch, calls } = createMockFetch({ code: 0, data: { list: [] }, fee: {} });
-    globalThis.fetch = mockFetch as any;
-
-    const { makeRequest } = await import('../client');
-    const params: Record<string, any> = JSON.parse('{"keywords":["李四"]}');
-    if (params.sort === undefined) params.sort = 0;
-    if (params.isExact === undefined) params.isExact = false;
-    await makeRequest('/agent/search/linkedin/person/list', params);
-
-    const call = assertSingleCall(calls);
-    assertEndpoint(call, '/agent/search/linkedin/person/list');
-    assertBody(call, { keywords: ['李四'], sort: 0, isExact: false });
-  });
-
-  it('customs-trade search：companyType 校验通过', async () => {
-    const { mockFetch, calls } = createMockFetch({ code: 0, data: { list: [] }, fee: {} });
-    globalThis.fetch = mockFetch as any;
-
-    const { makeRequest } = await import('../client');
-    const params = JSON.parse('{"products":["电子"],"companyType":1}');
-    // 模拟 CLI 校验逻辑
-    assert.ok(params.companyType === 1 || params.companyType === 2, 'companyType must be 1 or 2');
-    await makeRequest('/agent/customs/company/list', params);
-
-    const call = assertSingleCall(calls);
-    assertBody(call, { products: ['电子'], companyType: 1 });
-  });
-
-  it('customs-trade search：companyType 缺失时应报错', () => {
-    const params = JSON.parse('{"products":["电子"]}');
-    // 模拟 CLI 校验逻辑
-    const hasCompanyType = params.companyType === 1 || params.companyType === 2;
-    assert.strictEqual(hasCompanyType, false, 'Should reject missing companyType');
-  });
-
-  it('批量参数：20 条上限校验', () => {
-    const BATCH_LIMIT = 20;
-    const ids21 = Array.from({ length: 21 }, (_, i) => `id_${i}`);
-    const ids20 = Array.from({ length: 20 }, (_, i) => `id_${i}`);
-
-    assert.ok(ids21.length > BATCH_LIMIT, '21 IDs should exceed limit');
-    assert.ok(ids20.length <= BATCH_LIMIT, '20 IDs should be within limit');
-  });
-
-  it('email send：snake_case → camelCase 映射', async () => {
-    const { mockFetch, calls } = createMockFetch({ code: 0, data: {}, fee: {} });
-    globalThis.fetch = mockFetch as any;
-
-    const { makeRequest } = await import('../client');
-    // 模拟 email send 的 params 构建
-    const opts = {
-      subject: 'hello',
-      content: 'world',
-      emails: JSON.parse('["a@x.com","b@y.com"]'),
-      sendName: 'sender',
-      emailName: 'myemail',
-      replyEmail: 'reply@x.com',
-    };
-    const params: Record<string, any> = {
-      subject: opts.subject,
-      content: opts.content,
-      emails: opts.emails,
-    };
-    if (opts.sendName) params.sendName = opts.sendName;
-    if (opts.emailName) params.emailName = opts.emailName;
-    if (opts.replyEmail) params.replyEmail = opts.replyEmail;
-
-    await makeRequest('/agent/mail/send', params);
-
-    const call = assertSingleCall(calls);
-    assertBody(call, {
-      subject: 'hello',
-      content: 'world',
-      emails: ['a@x.com', 'b@y.com'],
-      sendName: 'sender',
-      emailName: 'myemail',
-      replyEmail: 'reply@x.com',
-    });
-  });
-
-  it('email task-list：pageNo/pageSize 默认值 + camelCase', async () => {
-    const { mockFetch, calls } = createMockFetch({ code: 0, data: {}, fee: {} });
-    globalThis.fetch = mockFetch as any;
-
-    const { makeRequest } = await import('../client');
-    // 模拟 task-list 默认 pageNo=1, pageSize=10
-    const params: Record<string, any> = {
-      pageNo: 1,
-      pageSize: 10,
-    };
-    await makeRequest('/agent/mail/task/list', params);
-
-    const call = assertSingleCall(calls);
-    assertBody(call, { pageNo: 1, pageSize: 10 });
-  });
-
-  it('map countries：免认证（requireAuth=false）', async () => {
-    const { mockFetch, calls } = createMockFetch({ code: 0, data: { list: [] } });
-    globalThis.fetch = mockFetch as any;
-
-    const { makeRequest } = await import('../client');
-    await makeRequest('/agent/common/country/list', {}, false);
-
-    const call = assertSingleCall(calls);
-    assertEndpoint(call, '/agent/common/country/list');
-    assertBody(call, {});
-    assert.ok(!call.headers['Authorization'], 'Should not have auth header');
-  });
-
-  it('customs-trade detail：int 数组参数', async () => {
-    const { mockFetch, calls } = createMockFetch({ code: 0, data: {}, fee: {} });
-    globalThis.fetch = mockFetch as any;
-
-    const { makeRequest } = await import('../client');
-    const companyIds = ['100001', '100002', '100003'].map(id => parseInt(id, 10));
-    await makeRequest('/agent/customs/company/detail/batch', { companyIds });
-
-    const call = assertSingleCall(calls);
-    assertBody(call, { companyIds: [100001, 100002, 100003] });
+  it('search company-batch：恰好 20 个 pid 不触发上限报错', () => {
+    // 20 个不报错，但会因 key/pid 无效在后续失败；这里只验证不触发"上限"校验
+    const pids = Array.from({ length: 20 }, (_, i) => `pid_${i}`);
+    const result = runCliAllowFail(['search', 'company-batch', '--pids', ...pids]);
+    assert.ok(
+      !result.stderr.includes('最多 20'),
+      `20 个不应触发上限校验，实际：${result.stderr}`,
+    );
   });
 });
