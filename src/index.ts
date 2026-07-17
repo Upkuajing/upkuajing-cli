@@ -19,13 +19,15 @@ import { registerEmailCommands } from './commands/email';
 import { registerSmsCommands } from './commands/sms';
 import { registerMapCommands } from './commands/map';
 import { registerInitCommand } from './init';
+import { registerUpdateCommand } from './commands/update';
+import { getLocalVersion } from './helpers';
 
 const program = new Command();
 
 program
   .name('up-cli')
   .description('Upkuajing (跨境魔方) CLI — 封装 OpenAPI 调用，面向开发者和 AI Agent')
-  .version('1.0.0');
+  .version(getLocalVersion());
 
 // 注册命令组
 registerAuthCommands(program);
@@ -39,5 +41,6 @@ registerEmailCommands(program);
 registerSmsCommands(program);
 registerMapCommands(program);
 registerInitCommand(program);
+registerUpdateCommand(program);
 
 program.parse();

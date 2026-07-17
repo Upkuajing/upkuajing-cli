@@ -4,6 +4,9 @@
  * 从 Python common.py 的 parse_params 翻译，并提取各命令文件中重复的辅助逻辑。
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
+
 /**
  * 解析 JSON 字符串为参数对象。
  *
@@ -55,11 +58,22 @@ export function withCursor(params: Record<string, any>, cursor?: string): Record
 /**
  * 注入 API 必填的默认参数（sort、isExact）。
  *
- * 对应 Python 脚本的默认值注入逻辑——API 要求 sort 和 isExact 必填，
+ * 对应 Python 脚本的默认值注入逻辑--API 要求 sort 和 isExact 必填，
  * 用户未提供时注入 sort=0（匹配度排序）、isExact=false（模糊匹配）。
  */
 export function injectSearchParamsDefaults(params: Record<string, any>): Record<string, any> {
   if (params.sort === undefined) params.sort = 0;
   if (params.isExact === undefined) params.isExact = false;
   return params;
+}
+
+/**
+ * 读取本地 package.json 的版本号。
+ *
+ * helpers.js 编译后在 dist/，package.json 在包根（上一级）。
+ */
+export function getLocalVersion(): string {
+  const pkgPath = path.join(__dirname, '..', 'package.json');
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+  return pkg.version;
 }

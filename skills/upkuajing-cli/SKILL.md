@@ -22,6 +22,7 @@ metadata: {"version":"1.0.0","homepage":"https://www.upkuajing.com","clawdbot":{
 | `sms` | 短信营销（发送、任务列表、任务记录） |
 | `map` | 地图商户搜索与地理数据 |
 | `auth` | 账号管理（申请 key、查看账户、充值） |
+| `update` | 检查并更新 up-cli 到 npm 最新版本 |
 
 ## 安装与配置
 
