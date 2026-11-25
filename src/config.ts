@@ -1,8 +1,11 @@
 /**
  * 配置管理 — 从 Python common.py 的 get_api_key / load_env_file 翻译
  *
- * API key 优先级：环境变量 UPKUAJING_API_KEY → ~/.upkuajing/.env 文件
- * 和现有 Python skill 共用同一份配置。
+ * 配置文件 ~/.upkuajing/.env 与现有 Python skill 共用，保存：
+ * - UPKUAJING_API_KEY：API 密钥（环境变量优先）
+ * - UPKUAJING_PLAN_MODE：全局计费模式（plan / balance / auto）
+ *
+ * 路径惰性计算，便于测试通过 HOME 隔离。
  */
 
 import * as fs from 'fs';
@@ -10,21 +13,30 @@ import * as path from 'path';
 import * as os from 'os';
 
 const API_KEY_ENV = 'UPKUAJING_API_KEY';
-const UPKUAJING_DIR = path.join(os.homedir(), '.upkuajing');
-const UPKUAJING_ENV_FILE = path.join(UPKUAJING_DIR, '.env');
+
+/** 配置目录（惰性计算，测试可覆盖 HOME）。 */
+function upkuajingDir(): string {
+  return path.join(os.homedir(), '.upkuajing');
+}
+
+/** 配置文件路径。 */
+function envFilePath(): string {
+  return path.join(upkuajingDir(), '.env');
+}
 
 /**
- * 从 ~/.upkuajing/.env 文件加载环境变量。
+ * 从 ~/.upkuajing/.env 文件加载变量。
  *
  * 对应 Python common.py:load_env_file。
  * 解析 KEY=VALUE 格式，跳过空行和 # 注释。
  */
-function loadEnvFile(): Record<string, string> {
+export function readEnvFile(): Record<string, string> {
   const envVars: Record<string, string> = {};
-  if (!fs.existsSync(UPKUAJING_ENV_FILE)) {
+  const file = envFilePath();
+  if (!fs.existsSync(file)) {
     return envVars;
   }
-  const content = fs.readFileSync(UPKUAJING_ENV_FILE, 'utf-8');
+  const content = fs.readFileSync(file, 'utf-8');
   for (const line of content.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) {
@@ -38,6 +50,60 @@ function loadEnvFile(): Record<string, string> {
     }
   }
   return envVars;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * 设置或删除配置文件中的某个变量。
+ *
+ * 只改动目标行，保留文件中的其他变量和注释；
+ * 文件权限固定为 0600，避免密钥被同机其他用户读取。
+ *
+ * @param key 变量名
+ * @param value 新值；传 null 表示删除该变量
+ */
+export function setEnvFileValue(key: string, value: string | null): void {
+  const file = envFilePath();
+  // 删除不存在的配置时不要凭空创建配置文件
+  if (value === null && !fs.existsSync(file)) {
+    return;
+  }
+
+  fs.mkdirSync(upkuajingDir(), { recursive: true });
+  const lines: string[] = fs.existsSync(file)
+    ? fs.readFileSync(file, 'utf-8').split('\n')
+    : [];
+
+  const pattern = new RegExp(`^\\s*${escapeRegExp(key)}\\s*=`);
+  const kept: string[] = [];
+  let written = false;
+
+  for (const line of lines) {
+    if (pattern.test(line)) {
+      if (!written && value !== null) {
+        kept.push(`${key}=${value}`);
+        written = true;
+      }
+      continue;
+    }
+    kept.push(line);
+  }
+
+  while (kept.length > 0 && kept[kept.length - 1].trim() === '') {
+    kept.pop();
+  }
+  if (value !== null && !written) {
+    kept.push(`${key}=${value}`);
+  }
+
+  fs.writeFileSync(file, kept.length > 0 ? kept.join('\n') + '\n' : '', {
+    encoding: 'utf-8',
+    mode: 0o600,
+  });
+  fs.chmodSync(file, 0o600);
 }
 
 /**
@@ -54,8 +120,7 @@ export function getApiKey(): string {
   }
 
   // 从 ~/.upkuajing/.env 读取
-  const envVars = loadEnvFile();
-  const fileKey = envVars[API_KEY_ENV];
+  const fileKey = readEnvFile()[API_KEY_ENV];
   if (fileKey) {
     return fileKey;
   }
@@ -63,7 +128,7 @@ export function getApiKey(): string {
   console.error(
     `错误：未找到API密钥。\n` +
     `请设置环境变量 ${API_KEY_ENV}，\n` +
-    `或在 ${UPKUAJING_ENV_FILE} 文件中添加：${API_KEY_ENV}=your_api_key_here`,
+    `或在 ${envFilePath()} 文件中添加：${API_KEY_ENV}=your_api_key_here`,
   );
   process.exit(1);
   return ''; // unreachable，满足 TS 返回类型
@@ -71,12 +136,11 @@ export function getApiKey(): string {
 
 /**
  * 写入 API key 到 ~/.upkuajing/.env 文件。
- * 用于 init 向导申请新 key 后保存。
+ *
+ * 只更新 UPKUAJING_API_KEY 一行，保留同文件中的其他配置（如全局计费模式）。
  */
 export function writeApiKey(apiKey: string): void {
-  // 确保目录存在
-  fs.mkdirSync(UPKUAJING_DIR, { recursive: true });
-  fs.writeFileSync(UPKUAJING_ENV_FILE, `${API_KEY_ENV}=${apiKey}\n`, 'utf-8');
+  setEnvFileValue(API_KEY_ENV, apiKey);
 }
 
 /**
@@ -87,11 +151,10 @@ export function hasApiKey(): boolean {
   if (process.env[API_KEY_ENV]) {
     return true;
   }
-  const envVars = loadEnvFile();
-  return !!envVars[API_KEY_ENV];
+  return !!readEnvFile()[API_KEY_ENV];
 }
 
-/** 返回配置文件路径，供 init 向导使用 */
+/** 返回配置文件路径，供 init 向导与 config 命令使用 */
 export function getEnvFilePath(): string {
-  return UPKUAJING_ENV_FILE;
+  return envFilePath();
 }

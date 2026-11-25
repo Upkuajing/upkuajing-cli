@@ -106,6 +106,15 @@ export function registerInitCommand(program: Command): void {
       console.log('  开放平台账号：' + (data.apiAccount || '(空)'));
       console.log('  账号余额：' + apiBalance + '分钱(RMB)');
 
+      const plan = data.plan && typeof data.plan === 'object' ? data.plan : null;
+      const planAvailable = !!plan && (plan.available === 1 || plan.available === true || plan.available === '1');
+      console.log(
+        '  套餐：' +
+          (planAvailable
+            ? '可用（搜索类调用默认优先走套餐）'
+            : '不可用（搜索类调用会先提示套餐不可用，确认后按余额扣费）'),
+      );
+
       console.log('\n安装完成！');
       console.log('和你的 AI 工具说："up-cli 能帮我做什么？"');
       console.log('或运行 up-cli --help 查看完整命令列表');

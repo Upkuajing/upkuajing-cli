@@ -55,7 +55,8 @@ up-cli --help
 | `email` | Email marketing (send, task list, task records) |
 | `sms` | SMS marketing (send, task list, task records) |
 | `map` | Map merchant search and geography data |
-| `auth` | Account management (apply key, view balance, recharge) |
+| `auth` | Account management (apply key, view balance, recharge, plan quota, pricing) |
+| `config` | Global settings (default billing mode, stored in `~/.upkuajing/.env`) |
 | `init` | One-step CLI setup |
 
 ## Examples
@@ -88,11 +89,25 @@ up-cli map countries
 - **Search commands** (search / customs / customs-trade / map search): pass complex search criteria via `--params '{JSON}'`, paginate with `--cursor`
 - **Simple commands** (depth-company employee, etc.): use discrete flags
 
+## Billing (plan mode)
+
+Search, customs and map calls are **plan-first**: the CLI automatically sends `"planMode": 2`.
+
+- **Plan unavailable** (no plan or quota exhausted): the CLI stops before executing, prints one `PLAN_UNAVAILABLE {JSON}` line on stdout, and exits with code **3**. Nothing is charged.
+- **Ask the user first**: explain the reason in plain language (no plan / quota exhausted, plus the reset time when known), state that continuing will be charged to the API balance (unit price: `up-cli auth price-info`), then wait for an explicit answer in a separate message.
+- **User agrees**: rerun the same command with `--plan-mode balance` (or `UPKUAJING_PLAN_MODE=1`) and report `fee` from the response.
+- **User declines**: stop; nothing is executed or charged.
+- **Check quota up front**: `up-cli auth plan-quota`; tier limits: `up-cli auth plan-config`.
+- **Switch for one call**: `up-cli --plan-mode balance <command>` (`--plan-mode plan|balance|auto`, accepted anywhere in the command line).
+- **Global default**: `up-cli config set-plan-mode balance|plan|auto` (stored in `~/.upkuajing/.env` next to the API key); `up-cli config show` prints the effective mode and its source; `up-cli config unset-plan-mode` restores the endpoint default.
+- Resolution order: `--plan-mode` flag → `UPKUAJING_PLAN_MODE` env var → `UPKUAJING_PLAN_MODE` in `~/.upkuajing/.env` → `planMode` inside `--params` → endpoint default (`2` for search/customs/map, absent otherwise).
+
 ## API Key
 
 - Priority: environment variable `UPKUAJING_API_KEY` → `~/.upkuajing/.env` file
 - Apply: `up-cli auth login` or `up-cli init`
 - Recharge: `up-cli auth recharge`
+- The same file stores the global billing mode: `up-cli config set-plan-mode plan|balance|auto`
 
 ## Requirements
 

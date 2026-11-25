@@ -2,9 +2,21 @@
  * API client — 从 Python common.py 的 make_request 翻译
  *
  * 统一 HTTP POST client，Bearer token 鉴权，对应现有 skill 的 make_request。
+ * 套餐计费：支持套餐的接口默认携带 planMode=2；套餐不可用时输出确认信息并以
+ * 退出码 3 结束，不会自动降级为余额计费。
  */
 
 import { getApiKey } from './config';
+import {
+  IDEMPOTENCY_KEY_ENV,
+  PLAN_ERROR_CODE,
+  PLAN_MODE_BALANCE,
+  PLAN_MODE_PLAN,
+  buildPlanUnavailable,
+  emitPlanUnavailable,
+  notifyPlanUsage,
+  withPlanMode,
+} from './plan';
 
 // API 配置
 const API_BASE_URL = process.env.UPKUAJING_API_BASE_URL || 'https://openapi.upkuajing.com';
@@ -16,6 +28,8 @@ export interface ApiResponse {
   data: any;
   fee?: any;
   msg?: string;
+  requestId?: string;
+  usage?: any;
 }
 
 // API 错误码常量
@@ -25,6 +39,9 @@ export const API_ERROR_CODE = {
   REQUEST_METHOD_ERROR: 97,
   REQUEST_AUTH_ERROR: 96,
   SEARCH_BALANCE_NOT_ENOUGH: 95,
+  PLAN_NOT_SUPPORTED: PLAN_ERROR_CODE.NOT_SUPPORTED,
+  PLAN_NOT_AVAILABLE: PLAN_ERROR_CODE.NOT_AVAILABLE,
+  PLAN_QUOTA_EXHAUSTED: PLAN_ERROR_CODE.QUOTA_EXHAUSTED,
 } as const;
 
 // API 错误码 → 中文消息
@@ -34,6 +51,9 @@ const API_ERROR_MESSAGES: Record<number, string> = {
   [API_ERROR_CODE.REQUEST_METHOD_ERROR]: '请求方式错误，请使用正确的HTTP方法',
   [API_ERROR_CODE.REQUEST_AUTH_ERROR]: '认证错误，请检查API密钥是否有效',
   [API_ERROR_CODE.SEARCH_BALANCE_NOT_ENOUGH]: '余额不足，请充值后继续使用',
+  [API_ERROR_CODE.PLAN_NOT_SUPPORTED]: '接口不支持套餐计费，请勿传 planMode=2',
+  [API_ERROR_CODE.PLAN_NOT_AVAILABLE]: '当前账号无有效套餐，请先购买套餐',
+  [API_ERROR_CODE.PLAN_QUOTA_EXHAUSTED]: '套餐额度已用完，可稍后重试或改用API余额',
 };
 
 // API 错误码 → 处理建议
@@ -41,12 +61,15 @@ const API_ERROR_SUGGESTIONS: Record<number, string> = {
   [API_ERROR_CODE.REQUEST_AUTH_ERROR]: '请检查环境变量 UPKUAJING_API_KEY 或文件 ~/.upkuajing/.env 中的API密钥是否正确',
   [API_ERROR_CODE.SEARCH_BALANCE_NOT_ENOUGH]: '请运行 up-cli auth recharge 创建充值订单',
   [API_ERROR_CODE.REQUEST_PARAM_ERROR]: '请参考 API 文档检查参数格式',
+  [API_ERROR_CODE.PLAN_NOT_SUPPORTED]: '该接口固定按余额计费，移除 planMode 参数后重试',
+  [API_ERROR_CODE.PLAN_QUOTA_EXHAUSTED]: '可等待额度恢复，或设置 UPKUAJING_PLAN_MODE=1 改用API余额',
 };
 
 /**
  * 向跨境魔方 API 发起 HTTP POST 请求。
  *
  * 对应 Python common.py:make_request。
+ * - 套餐不可用（无套餐/额度用完）→ stdout 输出 PLAN_UNAVAILABLE 并以退出码 3 结束
  * - HTTP/网络错误 → 打印到 stderr 并 process.exit(1)
  * - API 错误（code≠0）→ 返回原始 response 供调用者处理
  * - 成功（code=0）→ 返回完整 response
@@ -61,6 +84,10 @@ export async function makeRequest(
   requireAuth: boolean = true,
 ): Promise<ApiResponse> {
   const url = `${API_BASE_URL}${endpoint}`;
+
+  // 复制入参再注入 planMode，不污染调用方的参数对象
+  const { params: requestParams, planMode } = withPlanMode(endpoint, params);
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -70,11 +97,17 @@ export async function makeRequest(
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
+  // 网络超时后的重试复用同一个幂等键，避免重复计费
+  const idempotencyKey = process.env[IDEMPOTENCY_KEY_ENV];
+  if (idempotencyKey) {
+    headers['Idempotency-Key'] = idempotencyKey;
+  }
+
   const debug = !!process.env.UPKUAJING_DEBUG;
 
   if (debug) {
     console.error(`[debug] POST ${url}`);
-    console.error(`[debug] body: ${JSON.stringify(params)}`);
+    console.error(`[debug] body: ${JSON.stringify(requestParams)}`);
   }
 
   // 用 AbortController 实现总超时
@@ -85,7 +118,7 @@ export async function makeRequest(
     const response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(params),
+      body: JSON.stringify(requestParams),
       signal: controller.signal,
     });
 
@@ -102,6 +135,19 @@ export async function makeRequest(
       console.error(`[debug] response: ${JSON.stringify(data)}`);
     }
 
+    // 套餐不可用：输出确认信息并以退出码 3 结束，由调用方询问用户
+    const planUnavailable = buildPlanUnavailable(
+      endpoint,
+      requestParams,
+      planMode,
+      response.status,
+      data,
+      response.headers.get('Retry-After'),
+    );
+    if (planUnavailable) {
+      emitPlanUnavailable(planUnavailable);
+    }
+
     // 检查 HTTP 状态
     if (!response.ok) {
       const text = await response.text().catch(() => '');
@@ -109,7 +155,23 @@ export async function makeRequest(
       process.exit(1);
     }
 
-    // 成功和 API 错误都返回 dict，调用者检查 code
+    // 检查 API 级别的错误，0 表示成功，非 0 代表错误
+    if (data.code !== 0) {
+      if (data.code === API_ERROR_CODE.REQUEST_PARAM_ERROR && planMode === PLAN_MODE_PLAN) {
+        console.error(
+          `[提示] 参数错误可能与 planMode=2 有关，可设置 UPKUAJING_PLAN_MODE=${PLAN_MODE_BALANCE} 改用余额重试`,
+        );
+      } else if (data.code === API_ERROR_CODE.SEARCH_BALANCE_NOT_ENOUGH) {
+        console.error('[提示] 余额不足，请运行 up-cli auth recharge 充值');
+      } else if (data.code === API_ERROR_CODE.PLAN_NOT_SUPPORTED) {
+        console.error('[提示] 该接口不支持套餐计费，请移除 planMode 后重试');
+      }
+      return data;
+    }
+
+    // 套餐计费成功时输出本次用量，便于调用方转述给用户
+    notifyPlanUsage(data.usage);
+
     return data;
   } catch (e: any) {
     if (e.name === 'AbortError') {
